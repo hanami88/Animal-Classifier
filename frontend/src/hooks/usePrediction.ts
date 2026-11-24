@@ -1,18 +1,20 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
-import axios from 'axios';
-import { predictionApi } from '../services/predictionApi';
-import type { PredictionResponse, PredictionStatus } from '../types/prediction';
+import { useState, useEffect, useRef, useCallback } from "react";
+import axios from "axios";
+import { predictionApi } from "../services/predictionApi";
+import type { PredictionResponse, PredictionStatus } from "../types/prediction";
 
 const POLL_INTERVAL_MS = 2000;
-const STORAGE_KEY = 'pet-classifier:prediction-ids';
-const TERMINAL_STATUSES: PredictionStatus[] = ['COMPLETED', 'FAILED'];
+const STORAGE_KEY = "pet-classifier:prediction-ids";
+const TERMINAL_STATUSES: PredictionStatus[] = ["COMPLETED", "FAILED"];
 
 function readStoredPredictionIds(): string[] {
   try {
     const value = localStorage.getItem(STORAGE_KEY);
     if (!value) return [];
     const parsed: unknown = JSON.parse(value);
-    return Array.isArray(parsed) && parsed.every((id) => typeof id === 'string') ? parsed : [];
+    return Array.isArray(parsed) && parsed.every((id) => typeof id === "string")
+      ? parsed
+      : [];
   } catch {
     return [];
   }
@@ -65,47 +67,58 @@ export function usePrediction(): UsePredictionReturn {
     setIsPolling(false);
   }, []);
 
-  const fetchPredictions = useCallback(async (ids: string[]) => {
-    try {
-      const results = await Promise.all(ids.map(id => predictionApi.getPrediction(id)));
-      setPredictions(results);
+  const fetchPredictions = useCallback(
+    async (ids: string[]) => {
+      try {
+        const results = await Promise.all(
+          ids.map((id) => predictionApi.getPrediction(id)),
+        );
+        setPredictions(results);
+        setError(null);
+
+        // Check if all are in terminal status
+        const allTerminal = results.every((r) =>
+          TERMINAL_STATUSES.includes(r.status),
+        );
+        if (allTerminal && results.length > 0) {
+          stopPolling();
+        }
+      } catch (err: unknown) {
+        const message =
+          err instanceof Error ? err.message : "Failed to fetch predictions";
+        setError(message);
+        if (axios.isAxiosError(err) && err.response?.status === 404) {
+          stopPolling();
+        }
+      }
+    },
+    [stopPolling],
+  );
+
+  const startPolling = useCallback(
+    (ids: string[]) => {
+      // Stop any existing poll
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+      }
+
+      predictionIdsRef.current = ids;
+      setActiveIds(ids);
+      setPredictions([]);
       setError(null);
+      setIsPolling(true);
+      storePredictionIds(ids);
 
-      // Check if all are in terminal status
-      const allTerminal = results.every(r => TERMINAL_STATUSES.includes(r.status));
-      if (allTerminal && results.length > 0) {
-        stopPolling();
-      }
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Failed to fetch predictions';
-      setError(message);
-      if (axios.isAxiosError(err) && err.response?.status === 404) {
-        stopPolling();
-      }
-    }
-  }, [stopPolling]);
-
-  const startPolling = useCallback((ids: string[]) => {
-    // Stop any existing poll
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current);
-    }
-
-    predictionIdsRef.current = ids;
-    setActiveIds(ids);
-    setPredictions([]);
-    setError(null);
-    setIsPolling(true);
-    storePredictionIds(ids);
-
-    // Fetch immediately
-    fetchPredictions(ids);
-
-    // Then poll every 2s
-    intervalRef.current = setInterval(() => {
+      // Fetch immediately
       fetchPredictions(ids);
-    }, POLL_INTERVAL_MS);
-  }, [fetchPredictions]);
+
+      // Then poll every 2s
+      intervalRef.current = setInterval(() => {
+        fetchPredictions(ids);
+      }, POLL_INTERVAL_MS);
+    },
+    [fetchPredictions],
+  );
 
   const reset = useCallback(() => {
     stopPolling();
@@ -129,5 +142,13 @@ export function usePrediction(): UsePredictionReturn {
     };
   }, [startPolling]);
 
-  return { predictions, activeIds, isPolling, error, startPolling, stopPolling, reset };
+  return {
+    predictions,
+    activeIds,
+    isPolling,
+    error,
+    startPolling,
+    stopPolling,
+    reset,
+  };
 }
