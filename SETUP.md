@@ -50,6 +50,8 @@ cd backend
 uvicorn app.main:app --reload --port 8000
 ```
 
+> **Lưu ý lần chạy đầu:** Khi suy luận lần đầu tiên, backend tự động tải trọng số mô hình tách nền `DeepLabV3-MobileNetV3-Large` (~42 MB) từ PyTorch Hub nên cần có kết nối mạng (các lần sau dùng cache local; nếu tải/chạy tách nền lỗi sẽ tự fallback sang ảnh thô).
+
 ### Apple Silicon / MPS
 
 The backend automatically selects Apple MPS when it is available. You can set

@@ -29,9 +29,10 @@ dataset_ZIP/
 # R&D and Temp Notes
 /R&D_TEST/
 
-# Model weights (large binary files — export locally via scripts/export_weights.py)
-# backend/weights/
-# *.pt
+# Model weights (large binary files — ignored from git)
+backend/weights/
+*.pt
+*.pth
 
 # IDE / Editor
 .agent/

@@ -16,13 +16,12 @@ import torch
 import torch.nn.functional as F
 from transformers import CLIPModel, CLIPProcessor
 
-from app.core.config import settings
+from app.ai.common import BREED_CATALOGUE, WEIGHTS_DIR, get_device
 
 logger = logging.getLogger(__name__)
 
 MODEL_ID = "openai/clip-vit-base-patch32"
 MODEL_REVISION = "3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268"
-WEIGHTS_DIR = Path(__file__).parent.parent.parent / "weights"
 
 # Prompt template used by the benchmark notebook.
 PROMPT_TEMPLATES = [
@@ -39,47 +38,6 @@ OXFORD_CLASSES = [
     'Persian', 'Pomeranian', 'Pug', 'Ragdoll', 'Russian Blue', 'Saint Bernard', 
     'Samoyed', 'Scottish Terrier', 'Shiba Inu', 'Siamese', 'Sphynx', 
     'Staffordshire Bull Terrier', 'Wheaten Terrier', 'Yorkshire Terrier'
-]
-
-# 37 breeds — order matches DB ids 1-37
-BREED_CATALOGUE = [
-    (1,  "Abyssinian",                "Cat", "Abyssinian cat"),
-    (2,  "american_bulldog",          "Dog", "American Bulldog"),
-    (3,  "american_pit_bull_terrier", "Dog", "American Pit Bull Terrier"),
-    (4,  "basset_hound",              "Dog", "Basset Hound"),
-    (5,  "beagle",                    "Dog", "Beagle"),
-    (6,  "Bengal",                    "Cat", "Bengal cat"),
-    (7,  "Birman",                    "Cat", "Birman cat"),
-    (8,  "Bombay",                    "Cat", "Bombay cat"),
-    (9,  "boxer",                     "Dog", "Boxer dog"),
-    (10, "British_Shorthair",         "Cat", "British Shorthair cat"),
-    (11, "chihuahua",                 "Dog", "Chihuahua"),
-    (12, "Egyptian_Mau",              "Cat", "Egyptian Mau cat"),
-    (13, "english_cocker_spaniel",    "Dog", "English Cocker Spaniel"),
-    (14, "english_setter",            "Dog", "English Setter"),
-    (15, "german_shorthaired",        "Dog", "German Shorthaired Pointer"),
-    (16, "great_pyrenees",            "Dog", "Great Pyrenees"),
-    (17, "havanese",                  "Dog", "Havanese"),
-    (18, "japanese_chin",             "Dog", "Japanese Chin"),
-    (19, "keeshond",                  "Dog", "Keeshond"),
-    (20, "leonberger",                "Dog", "Leonberger"),
-    (21, "Maine_Coon",                "Cat", "Maine Coon cat"),
-    (22, "miniature_pinscher",        "Dog", "Miniature Pinscher"),
-    (23, "newfoundland",              "Dog", "Newfoundland dog"),
-    (24, "Persian",                   "Cat", "Persian cat"),
-    (25, "pomeranian",                "Dog", "Pomeranian"),
-    (26, "pug",                       "Dog", "Pug"),
-    (27, "Ragdoll",                   "Cat", "Ragdoll cat"),
-    (28, "Russian_Blue",              "Cat", "Russian Blue cat"),
-    (29, "saint_bernard",             "Dog", "Saint Bernard"),
-    (30, "samoyed",                   "Dog", "Samoyed"),
-    (31, "scottish_terrier",          "Dog", "Scottish Terrier"),
-    (32, "shiba_inu",                 "Dog", "Shiba Inu"),
-    (33, "Siamese",                   "Cat", "Siamese cat"),
-    (34, "Sphynx",                    "Cat", "Sphynx cat"),
-    (35, "staffordshire_bull_terrier","Dog", "Staffordshire Bull Terrier"),
-    (36, "wheaten_terrier",           "Dog", "Wheaten Terrier"),
-    (37, "yorkshire_terrier",         "Dog", "Yorkshire Terrier"),
 ]
 
 # ─── Singleton state ──────────────────────────────────────────────────────────
@@ -125,30 +83,6 @@ def verify_clip_artifacts() -> None:
             raise ValueError(f"CLIP artifact hash mismatch: {name}")
 
     _artifacts_verified = True
-
-
-def get_device() -> torch.device:
-    """Resolve the configured inference device, preferring MPS on macOS."""
-    requested = settings.AI_DEVICE.strip().lower()
-    if requested not in {"auto", "cpu", "mps", "cuda"}:
-        raise ValueError("AI_DEVICE must be one of: auto, cpu, mps, cuda")
-
-    if requested == "mps":
-        if not torch.backends.mps.is_available():
-            raise RuntimeError("AI_DEVICE=mps was requested, but MPS is not available")
-        return torch.device("mps")
-    if requested == "cuda":
-        if not torch.cuda.is_available():
-            raise RuntimeError("AI_DEVICE=cuda was requested, but CUDA is not available")
-        return torch.device("cuda")
-    if requested == "cpu":
-        return torch.device("cpu")
-
-    if torch.backends.mps.is_available():
-        return torch.device("mps")
-    if torch.cuda.is_available():
-        return torch.device("cuda")
-    return torch.device("cpu")
 
 
 def get_clip_backbone() -> Tuple[CLIPModel, CLIPProcessor, torch.device]:
