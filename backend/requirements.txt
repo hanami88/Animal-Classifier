@@ -8,11 +8,8 @@ pydantic-settings==2.1.0
 python-multipart==0.0.6
 Pillow==10.1.0
 
-# Image processing
-opencv-python==5.0.0.93
+# AI/ML & Storage
 numpy==2.5.3
-
-# Phase 4 — AI/ML (PyTorch + Torchvision + Cloudinary)
 torch==2.13.0
 torchvision==0.28.0
 cloudinary>=1.46.0

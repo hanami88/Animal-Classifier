@@ -1,0 +1,12 @@
+# Thư viện phục vụ huấn luyện mô hình & chuẩn bị dữ liệu trong my_training/
+torch>=2.1.0
+torchvision>=0.16.0
+numpy>=1.26.0
+Pillow>=10.0.0
+opencv-python>=4.8.0
+matplotlib>=3.8.0
+scikit-learn>=1.3.0
+
+# Dùng cho các script lọc/cân bằng dữ liệu phụ (clean_and_balance_dataset.py, verify_breed_clip.py)
+transformers>=4.40.0
+datasets>=2.18.0

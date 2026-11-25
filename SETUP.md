@@ -1,132 +1,134 @@
-# CLIP Pet Classifier — Setup Guide
+# Hướng dẫn cài đặt & Khởi chạy (SETUP.md)
 
-Tài liệu hướng dẫn cài đặt và khởi chạy dự án tại local.
-
-## Yêu cầu hệ thống
-- **Python** >= 3.10
-- **Node.js** >= 20.19
-- **Docker Desktop** (chạy PostgreSQL)
-- **macOS 14+ on Apple Silicon** (required for the pinned MPS build)
+Tài liệu dành cho người mới, hướng dẫn cài đặt từ máy sạch để chạy hệ thống **Pet Breed Classifier** trên máy cá nhân.
 
 ---
 
-## 1. Khởi động Database
+## 1. Phần mềm cần cài sẵn
 
-Khởi chạy PostgreSQL qua Docker:
+1. **Docker Desktop** (dùng để chạy PostgreSQL).
+2. **Python >= 3.10** (khuyến nghị Python 3.12).
+3. **Node.js >= 20.19** (đi kèm `npm`).
+4. *(Tuỳ chọn trên macOS)*: **macOS 14+ với Apple Silicon** nếu muốn chạy tăng tốc **MPS**. Nếu chạy CPU hoặc CUDA, hệ thống tự động chọn theo cấu hình `AI_DEVICE` trong `.env`.
+
+---
+
+## 2. Khởi chạy PostgreSQL bằng Docker
+
+> **Quan trọng:** Mở ứng dụng **Docker Desktop** trước và đợi đến khi Docker báo trạng thái sẵn sàng (*Engine running*) rồi mới chạy lệnh dưới đây.
+
+Từ thư mục gốc của dự án:
 
 ```bash
 docker compose up -d
 ```
 
+Lệnh này khởi tạo container PostgreSQL 16 (xem tên container, database, user và cổng kết nối trong [docker-compose.yml](docker-compose.yml)).
+
 ---
 
-## 2. Cài đặt & Chạy Backend (FastAPI)
+## 3. Cài đặt Backend & Tạo file cấu hình `.env`
+
+Mở terminal tại thư mục `backend/`:
 
 ```bash
 cd backend
 
-# Khởi tạo và kích hoạt virtual environment
-python -m venv venv
-.\venv\Scripts\Activate.ps1   # Windows
-# source venv/bin/activate    # macOS/Linux
+# Tạo môi trường ảo Python (.venv)
+python3 -m venv .venv
 
-# Cài đặt thư viện
+# Kích hoạt môi trường ảo
+source .venv/bin/activate      # macOS / Linux
+# .\.venv\Scripts\Activate.ps1 # Windows PowerShell
+
+# Cài đặt thư viện chạy Web Backend
 pip install -r requirements.txt
+```
 
-# Cấu hình biến môi trường
+*(Ghi chú: nếu bạn muốn tự huấn luyện lại model trong `my_training/`, cài thêm gói từ [my_training/requirements.txt](my_training/requirements.txt).)*
+
+### Tạo `backend/.env` từ file mẫu
+
+```bash
 cp .env.example .env
-# Chú ý: Hãy mở file .env và điền thông tin tài khoản Cloudinary của bạn:
-# CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET
-
-# Chạy DB migrations và seed dữ liệu ban đầu
-alembic upgrade head
-cd .. && python scripts/seed_breeds.py
-
-# Xuất / Huấn luyện trọng số các Model AI (Bắt buộc để chạy inference)
-python scripts/export_weights.py
-cd backend
-
-# Khởi chạy server
-uvicorn app.main:app --reload --port 8000
 ```
 
-> **Lưu ý lần chạy đầu:** Khi suy luận lần đầu tiên, backend tự động tải trọng số mô hình tách nền `DeepLabV3-MobileNetV3-Large` (~42 MB) từ PyTorch Hub nên cần có kết nối mạng (các lần sau dùng cache local; nếu tải/chạy tách nền lỗi sẽ tự fallback sang ảnh thô).
+Mở file `backend/.env` và điền đầy đủ giá trị theo [backend/.env.example](backend/.env.example):
+- Thông tin PostgreSQL (`POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `POSTGRES_SERVER`, `POSTGRES_PORT`): điền khớp với cấu hình trong [docker-compose.yml](docker-compose.yml).
+- Thông tin tài khoản **Cloudinary** của riêng bạn (`CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET`, `CLOUDINARY_URL`) lấy từ Cloudinary Dashboard.
 
-### Apple Silicon / MPS
-
-The backend automatically selects Apple MPS when it is available. You can set
-`AI_DEVICE=mps` in `backend/.env` to require MPS, or `AI_DEVICE=cpu` to force a
-CPU fallback while diagnosing a Metal issue.
-
-Verify the environment before starting the API:
-
-```bash
-python3 -c "import torch; print(torch.backends.mps.is_built(), torch.backends.mps.is_available())"
-```
-
-Both values should be `True` when MPS is required. Start the backend on macOS
-with the same application command after activating `backend/venv`:
-
-```bash
-source venv/bin/activate
-uvicorn app.main:app --reload --port 8000
-```
+> **Bảo mật:** Không bao giờ chia sẻ hoặc commit file `backend/.env` lên Git (file này đã được `.gitignore` bỏ qua).
 
 ---
 
-## 3. Cài đặt & Chạy Frontend (React Vite)
+## 4. Chuẩn bị file trọng số (Weights) cho 5 mô hình
 
-Mở một terminal mới:
+Vì các file checkpoint `.pth` có dung lượng lớn nên bị `.gitignore` chặn và **không nằm sẵn trong Git repository**.
+
+1. Đặt đủ **5 file checkpoint gốc** vào thư mục `backend/weights/`:
+   - `resnet18_augmented_best.pth`
+   - `seresnet18_augmented_best.pth`
+   - `densenet121_augmented_best.pth`
+   - `efficientnet_b0_augmented_best.pth`
+   - `dual_stream_efficientnet_best.pth`
+2. Quay về **thư mục gốc của dự án** và chạy script trích xuất bản nhẹ `*_state_dict.pth` phục vụ web (script không làm thay đổi 5 file gốc):
+
+```bash
+cd ..
+backend/.venv/bin/python scripts/extract_state_dicts.py
+```
+
+Sau bước này, `backend/weights/` sẽ có thêm 5 file `*_state_dict.pth` mà backend sử dụng. *(Nếu thiếu file của model nào, server vẫn khởi động bình thường và đánh dấu model đó là "Không khả dụng" trên giao diện.)*
+
+---
+
+## 5. Khởi tạo bảng Database & Seed 37 giống chó mèo
+
+Từ thư mục gốc của dự án:
+
+```bash
+# Chạy DB migrations
+cd backend
+.venv/bin/alembic upgrade head
+
+# Quay lại thư mục gốc và nạp 2 loài (Cat, Dog) cùng 37 giống vào PostgreSQL
+cd ..
+backend/.venv/bin/python scripts/seed_breeds.py
+```
+
+Script `seed_breeds.py` tự lấy danh sách chuẩn 37 giống từ backend (không cần tải thư mục `dataset/`).
+
+---
+
+## 6. Khởi chạy Backend và Frontend
+
+### Terminal 1 — Chạy Backend (FastAPI)
+
+```bash
+cd backend
+.venv/bin/uvicorn app.main:app --reload --port 8000
+```
+
+> **Lưu ý ở lần chạy đầu tiên:** Ngay khi nhận request phân loại ảnh đầu tiên, backend sẽ tự động tải trọng số mô hình tách nền `DeepLabV3-MobileNetV3-Large` (**~42 MB**) từ PyTorch Hub về cache trên máy, vì vậy **lần chạy đầu cần có kết nối Internet**. Những lần sau dùng bản cache offline.
+
+### Terminal 2 — Chạy Frontend (React Vite)
 
 ```bash
 cd frontend
-
-# Cài đặt dependencies
 npm install
-
-# Khởi chạy ứng dụng
 npm run dev
 ```
 
 ---
 
-## 4. Kiến trúc hệ thống & Luồng hoạt động
+## 7. Kiểm tra hoạt động
 
-Dự án **CLIP Pet Classifier** được xây dựng theo kiến trúc Client-Server hiện đại, kết hợp Xử lý bất đồng bộ (Asynchronous Background Task) để tối ưu việc chạy các Model AI nặng.
+- **Giao diện Web:** `http://localhost:5173`
+- **Tài liệu API (Swagger UI):** `http://localhost:8000/docs`
+- **Kiểm tra danh sách model:** `http://localhost:8000/api/v1/models`
 
-### Cấu trúc Frontend (React + Vite)
-- Cung cấp giao diện tương tác mượt mà: Kéo thả ảnh (Drag & Drop), chọn Model AI, và xem kết quả biểu đồ trực quan.
-- Sử dụng cơ chế Polling (gọi API liên tục mỗi 1 giây) để lắng nghe trạng thái của quá trình phân loại AI đang chạy ẩn dưới nền Backend.
-- Lưu và hiển thị lịch sử nhận diện (History Dashboard) của người dùng.
+*(Tuỳ chọn — kiểm tra nhanh độ chính xác 5 model với `torchvision`):*
 
-### Cấu trúc Backend (FastAPI + PostgreSQL + Cloudinary)
-1. **Upload & Storage**: Khi nhận được ảnh từ Client, Backend lập tức upload ảnh đó lên hệ thống lưu trữ đám mây **Cloudinary**. Cloudinary trả về một đường link URL an toàn.
-2. **Database Tracking**: Backend lưu URL của bức ảnh, thời gian, tên Model đã chọn và trạng thái khởi tạo (`PROCESSING`) vào CSDL **PostgreSQL**.
-3. **Background Inference**: Để không chặn luồng chính (không bắt người dùng chờ HTTP Request lâu), FastAPI giao nhiệm vụ chạy Model AI cho một Background Task.
-4. **Phản hồi**: Background Task tải ảnh từ Cloudinary URL vào bộ nhớ RAM (`bytes`), đưa vào Model AI đã chọn, đo lường thời gian (Processing Time) và cập nhật kết quả Top-K (5 giống gần nhất) vào Database với trạng thái `COMPLETED`. Frontend nhờ cơ chế Polling sẽ nhận được kết quả này và hiển thị cho người dùng.
-
----
-
-## 5. Hệ thống Models AI (CLIP-based)
-
-Dự án tích hợp 4 mô hình học máy dựa trên nền tảng **OpenAI CLIP**, được thiết kế để phân loại 37 giống Chó & Mèo (từ Oxford-IIIT Pet Dataset) với các phương pháp và mức độ phức tạp khác nhau:
-
-- **1. CLIP Zero-Shot Baseline**: 
-  - Mô hình gốc không qua huấn luyện (Training-Free).
-  - So sánh trực tiếp ảnh tải lên với các câu prompt (mô tả bằng văn bản).
-  - Tốc độ cực nhanh nhưng độ chính xác thấp nhất (87.76%).
-  
-- **2. Tip-Adapter-F (Cache Adapter)**: 
-  - Sử dụng cơ chế Few-Shot Learning, tạo một bộ nhớ đệm (Cache Model) chứa đặc trưng của các ảnh đã học.
-  - Kết hợp (blend) giữa trọng số Zero-shot và dự đoán từ thuật toán KNN (K-Nearest Neighbors).
-  - Tăng độ chính xác lên 89.56%.
-  
-- **3. CLIP-Adapter (Feature Adapter)**: 
-  - Đóng băng toàn bộ trọng số của CLIP, chỉ huấn luyện một mạng Neural tuyến tính nhỏ (Bottleneck MLP) bổ sung vào cuối bộ trích xuất đặc trưng (Feature Extractor).
-  - Tốc độ huấn luyện nhanh, dung lượng siêu nhẹ gọn (chỉ vài chục KB) nhưng đạt độ chính xác ấn tượng (90.27%).
-  
-- **4. CoOp (Context Optimization - Prompt Tuning)**:
-  - Thay vì tự viết prompt thủ công (vd: *"a photo of a..."*), mô hình này tiến hành huấn luyện các bộ *vector ngữ cảnh liên tục* (Learnable Context Vectors) để ghép vào văn bản đầu vào.
-  - Đây là Model mạnh mẽ nhất trong dự án, xử lý tốt ngữ nghĩa và đạt độ chính xác cao nhất (91.61%).
-
-*Lưu ý: Tất cả các Model trong dự án đều tích hợp cơ chế **TTA (Test-Time Augmentation)**: tự động cắt ảnh ban đầu thành 5 mảnh (4 góc + trung tâm) để tăng cường độ ổn định và chính xác khi dự đoán thực tế.*
+```bash
+backend/.venv/bin/python scripts/verify_new_models.py --num-samples 300 --seed 42
+```
