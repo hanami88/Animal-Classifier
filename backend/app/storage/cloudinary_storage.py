@@ -10,8 +10,7 @@ cloudinary.config(
 
 def upload_image_to_cloudinary(file_content: bytes, filename: str, user_id: str = "anonymous") -> str:
     """Uploads an image to Cloudinary and returns the secure URL."""
-    # We use a folder structure like clip-pet-classifier/users/anonymous/
-    folder_path = f"clip-pet-classifier/users/{user_id}"
+    folder_path = f"pet-breed-classifier/users/{user_id}"
     
     response = cloudinary.uploader.upload(
         file_content,

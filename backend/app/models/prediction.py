@@ -22,7 +22,7 @@ class Prediction(Base):
     score = Column(Float, nullable=True)
     top_k_results = Column(JSONB, nullable=True)
     model_version = Column(String, nullable=True)
-    method = Column(String, nullable=True)  # ModelMethod value: zero-shot | tip-adapter-f | clip-adapter | coop
+    method = Column(String, nullable=True)  # ModelMethod value: resnet18 | seresnet18 | densenet121 | efficientnet-b0 | dual-stream-efficientnet
     processing_time = Column(Float, nullable=True) # in seconds
     status = Column(Enum(PredictionStatus), default=PredictionStatus.UPLOADED, nullable=False)
     error_message = Column(Text, nullable=True)

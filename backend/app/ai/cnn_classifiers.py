@@ -26,13 +26,18 @@ from app.ai.common import (
     load_rgb_image,
 )
 from app.ai.preprocessing import (
+    PreprocessedInputs,
     aggregate_tta_probs,
+    image_to_tensor,
     make_4view_tta_batch,
-    preprocess_dual_stream,
-    preprocess_single_image,
+    prepare_batch_inputs,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _format_model_version(base_version: str, use_tta: bool) -> str:
+    return f"{base_version}+tta" if use_tta else base_version
 
 
 class SingleStreamCNNClassifier(Classifier):
@@ -55,13 +60,13 @@ class SingleStreamCNNClassifier(Classifier):
         self._model.eval()
         logger.info("[%s] Ready on %s (%s).", model_version, self._device, weights_filename)
 
-    def predict(
+    def predict_from_preprocessed(
         self,
-        image: Union[str, bytes, PILImage],
+        prepared: PreprocessedInputs,
         use_tta: bool = False,
     ) -> ClassifierResult:
-        pil_img = load_rgb_image(image)
-        tensor = preprocess_single_image(pil_img).to(self._device)
+        """Classify using pre-segmented PIL views (shared in batch requests)."""
+        tensor = image_to_tensor(prepared.body_img).to(self._device)
 
         self._model.eval()
         with torch.no_grad():
@@ -72,7 +77,20 @@ class SingleStreamCNNClassifier(Classifier):
                 logits = self._model(tensor).squeeze(0)
                 probs = F.softmax(logits, dim=-1)
 
-        return build_classifier_result(probs, model_version=self.model_version, top_k=self.top_k)
+        return build_classifier_result(
+            probs,
+            model_version=_format_model_version(self.model_version, use_tta),
+            top_k=self.top_k,
+        )
+
+    def predict(
+        self,
+        image: Union[str, bytes, PILImage],
+        use_tta: bool = False,
+    ) -> ClassifierResult:
+        pil_img = load_rgb_image(image)
+        prepared = prepare_batch_inputs(pil_img)
+        return self.predict_from_preprocessed(prepared, use_tta=use_tta)
 
 
 class ResNet18Classifier(SingleStreamCNNClassifier):
@@ -131,15 +149,14 @@ class DualStreamEfficientNetClassifier(Classifier):
         self._model.eval()
         logger.info("[%s] Ready on %s (%s).", self.MODEL_VERSION, self._device, self.WEIGHTS_FILENAME)
 
-    def predict(
+    def predict_from_preprocessed(
         self,
-        image: Union[str, bytes, PILImage],
+        prepared: PreprocessedInputs,
         use_tta: bool = False,
     ) -> ClassifierResult:
-        pil_img = load_rgb_image(image)
-        body_tensor, head_tensor = preprocess_dual_stream(pil_img)
-        body_tensor = body_tensor.to(self._device)
-        head_tensor = head_tensor.to(self._device)
+        """Classify using pre-segmented PIL body & head views (shared in batch requests)."""
+        body_tensor = image_to_tensor(prepared.body_img).to(self._device)
+        head_tensor = image_to_tensor(prepared.head_img).to(self._device)
 
         self._model.eval()
         with torch.no_grad():
@@ -152,4 +169,17 @@ class DualStreamEfficientNetClassifier(Classifier):
                 logits = self._model(body_tensor, head_tensor).squeeze(0)
                 probs = F.softmax(logits, dim=-1)
 
-        return build_classifier_result(probs, model_version=self.MODEL_VERSION, top_k=self.top_k)
+        return build_classifier_result(
+            probs,
+            model_version=_format_model_version(self.MODEL_VERSION, use_tta),
+            top_k=self.top_k,
+        )
+
+    def predict(
+        self,
+        image: Union[str, bytes, PILImage],
+        use_tta: bool = False,
+    ) -> ClassifierResult:
+        pil_img = load_rgb_image(image)
+        prepared = prepare_batch_inputs(pil_img)
+        return self.predict_from_preprocessed(prepared, use_tta=use_tta)

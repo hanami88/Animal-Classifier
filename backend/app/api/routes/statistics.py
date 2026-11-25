@@ -6,7 +6,7 @@ from sqlalchemy import case, func
 from sqlalchemy.orm import Session, joinedload
 
 from app.core.database import get_db
-from app.ai.registry import MODEL_DISPLAY_INFO, ModelMethod
+from app.ai.registry import ModelMethod
 from app.models.breed import Breed
 from app.models.prediction import Prediction, PredictionStatus
 from app.models.species import Species
@@ -24,7 +24,6 @@ def _round_optional(value: Optional[float], digits: int = 4) -> Optional[float]:
 def get_statistics(
     date_from: Optional[date] = Query(default=None),
     date_to: Optional[date] = Query(default=None),
-    backbone: Optional[str] = Query(default=None),
     method: Optional[ModelMethod] = Query(default=None),
     recent_page: int = Query(default=1, ge=1),
     recent_limit: int = Query(default=10, ge=1, le=100),
@@ -44,15 +43,6 @@ def get_statistics(
     filters = [Prediction.created_at >= start_at, Prediction.created_at < end_at]
     if method:
         filters.append(Prediction.method == method.value)
-    elif backbone:
-        backbone_methods = [
-            model_method.value
-            for model_method, info in MODEL_DISPLAY_INFO.items()
-            if info["backbone"] == backbone
-        ]
-        if not backbone_methods:
-            raise HTTPException(status_code=422, detail="Unknown backbone")
-        filters.append(Prediction.method.in_(backbone_methods))
 
     total = db.query(func.count(Prediction.id)).filter(*filters).scalar() or 0
     completed = (
@@ -106,9 +96,9 @@ def get_statistics(
             func.avg(case((Prediction.status == PredictionStatus.COMPLETED, Prediction.score))).label("confidence"),
             func.avg(case((Prediction.status == PredictionStatus.COMPLETED, Prediction.processing_time))).label("processing_time"),
         )
-        # Legacy and test rows may not have a method. They still contribute to
-        # the overall activity totals, but are not a classification model.
-        .filter(*filters, Prediction.method.in_([item.value for item in ModelMethod]))
+        # Legacy rows without a method still contribute to overall totals,
+        # while method breakdowns include every named classification method.
+        .filter(*filters, Prediction.method.isnot(None))
         .group_by(Prediction.method)
         .order_by(func.count(Prediction.id).desc())
         .all()

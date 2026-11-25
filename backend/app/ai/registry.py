@@ -1,193 +1,142 @@
-"""
-registry.py — Lazy-loading model registry for all 4 CLIP classifiers.
+"""Thread-safe lazy-loading registry for the 5 custom CNN pet breed classifiers."""
 
-Usage:
-    from app.ai.registry import ClassifierRegistry, ModelMethod
-    classifier = ClassifierRegistry.get(ModelMethod.ZERO_SHOT)
-"""
 from __future__ import annotations
 
 import logging
+import threading
 from enum import Enum
 from typing import Dict
 
 from app.ai.base import Classifier
+from app.ai.common import WEIGHTS_DIR
 
 logger = logging.getLogger(__name__)
 
 
 class ModelMethod(str, Enum):
-    ZERO_SHOT    = "zero-shot"
-    TIP_ADAPTER  = "tip-adapter"
-    TIP_ADAPTER_F = "tip-adapter-f"
-    CLIP_ADAPTER = "clip-adapter"
-    COOP         = "coop"
-    RESNET50_PROTOTYPE = "resnet50-prototype"
-    RESNET50_BASELINE  = "resnet50-baseline"
-    RESNET50_LINEAR    = "resnet50-linear"
-    RESNET50_ADAPTER   = "resnet50-adapter"
-    RESNET50_COSINE    = "resnet50-cosine"
+    RESNET18 = "resnet18"
+    SERESNET18 = "seresnet18"
+    DENSENET121 = "densenet121"
+    EFFICIENTNET_B0 = "efficientnet-b0"
+    DUAL_STREAM_EFFICIENTNET = "dual-stream-efficientnet"
 
 
-# Human-readable display names for the UI
 MODEL_DISPLAY_INFO: Dict[str, dict] = {
-    ModelMethod.ZERO_SHOT: {
-        "name":        "Zero-Shot",
-        "description": "Baseline CLIP using manually crafted text prompts.",
-        "accuracy":    87.76,
-        "latency_ms":  0.85,
-        "params":      0,
-        "tag":         "Fastest",
-        "backbone":    "clip",
+    ModelMethod.DUAL_STREAM_EFFICIENTNET: {
+        "name": "Dual-Stream EfficientNet-B0",
+        "description": "Mô hình 2 luồng (Thân + Mặt) với cơ chế cổng Gated Fusion, đạt độ chính xác cao nhất.",
+        "accuracy": 85.72,
+        "accuracy_single": 85.72,
+        "accuracy_tta": 86.54,
+        "params": 5042081,
+        "recommended": True,
+        "is_default": True,
+        "tag": "Recommended",
+        "weights_file": "dual_stream_efficientnet_state_dict.pth",
     },
-    ModelMethod.TIP_ADAPTER: {
-        "name":        "Tip-Adapter (Free)",
-        "description": "Training-free cache model using few-shot support set.",
-        "accuracy":    87.90,
-        "latency_ms":  0.92,
-        "params":      0,
-        "tag":         "Training-Free",
-        "backbone":    "clip",
+    ModelMethod.EFFICIENTNET_B0: {
+        "name": "EfficientNet-B0",
+        "description": "Mạng MBConv + Squeeze-and-Excitation gọn nhẹ, cân bằng tốt giữa tốc độ và độ chính xác.",
+        "accuracy": 83.32,
+        "accuracy_single": 83.32,
+        "accuracy_tta": 83.78,
+        "params": 4045605,
+        "recommended": False,
+        "is_default": False,
+        "tag": "Fast & Accurate",
+        "weights_file": "efficientnet_b0_state_dict.pth",
     },
-    ModelMethod.TIP_ADAPTER_F: {
-        "name":        "Tip-Adapter-F",
-        "description": "Fine-tuned cache model keys for optimal few-shot performance.",
-        "accuracy":    89.56,
-        "latency_ms":  0.92,
-        "params":      1884160,
-        "tag":         "Few-Shot Tuned",
-        "backbone":    "clip",
+    ModelMethod.DENSENET121: {
+        "name": "DenseNet-121",
+        "description": "Mạng kết nối dày đặc tái sử dụng đặc trưng đa tầng hiệu quả.",
+        "accuracy": 74.54,
+        "accuracy_single": 74.54,
+        "accuracy_tta": 75.33,
+        "params": 6991781,
+        "recommended": False,
+        "is_default": False,
+        "tag": "Dense Features",
+        "weights_file": "densenet121_state_dict.pth",
     },
-    ModelMethod.CLIP_ADAPTER: {
-        "name":        "CLIP-Adapter",
-        "description": "Residual feature adapter with bottleneck MLP.",
-        "accuracy":    90.27,
-        "latency_ms":  0.89,
-        "params":      66112,
-        "tag":         "Feature Tuned",
-        "backbone":    "clip",
+    ModelMethod.SERESNET18: {
+        "name": "SEResNet-18",
+        "description": "ResNet-18 tích hợp khối chú ý kênh Squeeze-and-Excitation.",
+        "accuracy": 70.62,
+        "accuracy_single": 70.62,
+        "accuracy_tta": 71.55,
+        "params": 11282533,
+        "recommended": False,
+        "is_default": False,
+        "tag": "Channel Attention",
+        "weights_file": "seresnet18_state_dict.pth",
     },
-    ModelMethod.COOP: {
-        "name":        "CoOp (Prompt Tuning)",
-        "description": "Learnable context vectors injected into CLIP text prompts.",
-        "accuracy":    91.61,
-        "latency_ms":  0.95,
-        "params":      2048,
-        "tag":         "Best Accuracy",
-        "backbone":    "clip",
-    },
-    ModelMethod.RESNET50_PROTOTYPE: {
-        "name":        "ResNet-50 Prototype",
-        "description": "Nearest centroid classification using frozen ResNet features.",
-        "accuracy":    91.69,
-        "latency_ms":  18.50,
-        "params":      0,
-        "tag":         "Training-Free",
-        "backbone":    "resnet50",
-    },
-    ModelMethod.RESNET50_BASELINE: {
-        "name":        "ResNet-50 Baseline",
-        "description": "Standard linear probe on raw images without TTA.",
-        "accuracy":    91.80,
-        "latency_ms":  4.50,
-        "params":      75813,
-        "tag":         "Standard",
-        "backbone":    "resnet50",
-    },
-    ModelMethod.RESNET50_LINEAR: {
-        "name":        "ResNet-50 Linear Probe",
-        "description": "Standard linear layer trained on frozen features.",
-        "accuracy":    92.40,
-        "latency_ms":  18.60,
-        "params":      75813,
-        "tag":         "Standard Probe",
-        "backbone":    "resnet50",
-    },
-    ModelMethod.RESNET50_ADAPTER: {
-        "name":        "ResNet-50 Residual Adapter",
-        "description": "Residual MLP with bottleneck architecture.",
-        "accuracy":    92.42,
-        "latency_ms":  19.10,
-        "params":      1050213,
-        "tag":         "Deep Probe",
-        "backbone":    "resnet50",
-    },
-    ModelMethod.RESNET50_COSINE: {
-        "name":        "ResNet-50 Cosine Head",
-        "description": "Cosine distance classifier with 5-view TTA.",
-        "accuracy":    93.08,
-        "latency_ms":  20.45,
-        "params":      75815,
-        "tag":         "Best CNN",
-        "backbone":    "resnet50",
+    ModelMethod.RESNET18: {
+        "name": "ResNet-18",
+        "description": "Mạng tích chập phần dư cổ điển làm mốc đối chiếu cơ sở.",
+        "accuracy": 67.84,
+        "accuracy_single": 67.84,
+        "accuracy_tta": 68.47,
+        "params": 11195493,
+        "recommended": False,
+        "is_default": False,
+        "tag": "Baseline",
+        "weights_file": "resnet18_state_dict.pth",
     },
 }
 
 
 class ClassifierRegistry:
-    """
-    Lazy-loading singleton registry.
-    Each classifier is loaded at most once and cached for reuse.
-    """
+    """Thread-safe lazy-loading singleton registry for all 5 classifiers."""
+
     _cache: Dict[ModelMethod, Classifier] = {}
+    _lock = threading.Lock()
+
+    @classmethod
+    def is_available(cls, method: ModelMethod) -> bool:
+        info = MODEL_DISPLAY_INFO.get(method)
+        if not info:
+            return False
+        return (WEIGHTS_DIR / info["weights_file"]).is_file()
 
     @classmethod
     def get(cls, method: ModelMethod) -> Classifier:
-        """Return the classifier for the given method, loading it if necessary."""
+        """Return the cached classifier for method, loading once under a thread lock."""
         if method not in cls._cache:
-            logger.info(f"[Registry] Loading classifier: {method}")
-            cls._cache[method] = cls._load(method)
-            logger.info(f"[Registry] Classifier ready: {method}")
+            with cls._lock:
+                if method not in cls._cache:
+                    logger.info("[Registry] Loading classifier: %s", method.value)
+                    cls._cache[method] = cls._load(method)
+                    logger.info("[Registry] Classifier ready: %s", method.value)
         return cls._cache[method]
 
     @classmethod
     def _load(cls, method: ModelMethod) -> Classifier:
-        if method == ModelMethod.ZERO_SHOT:
-            from app.ai.clip_zero_shot import ZeroShotClassifier
-            return ZeroShotClassifier()
-
-        elif method == ModelMethod.TIP_ADAPTER:
-            from app.ai.tip_adapter import TipAdapterClassifier
-            return TipAdapterClassifier()
-
-        elif method == ModelMethod.TIP_ADAPTER_F:
-            from app.ai.tip_adapter_f import TipAdapterFClassifier
-            return TipAdapterFClassifier()
-
-        elif method == ModelMethod.CLIP_ADAPTER:
-            from app.ai.clip_adapter import CLIPAdapterClassifier
-            return CLIPAdapterClassifier()
-
-        elif method == ModelMethod.COOP:
-            from app.ai.coop import CoOpClassifier
-            return CoOpClassifier()
-
-        elif method == ModelMethod.RESNET50_PROTOTYPE:
-            from app.ai.resnet50_prototype import ResNet50PrototypeClassifier
-            return ResNet50PrototypeClassifier()
-
-        elif method == ModelMethod.RESNET50_BASELINE:
-            from app.ai.resnet50_baseline import ResNet50BaselineClassifier
-            return ResNet50BaselineClassifier()
-            
-        elif method == ModelMethod.RESNET50_LINEAR:
-            from app.ai.resnet50_linear import ResNet50LinearClassifier
-            return ResNet50LinearClassifier()
-            
-        elif method == ModelMethod.RESNET50_ADAPTER:
-            from app.ai.resnet50_adapter import ResNet50AdapterClassifier
-            return ResNet50AdapterClassifier()
-
-        elif method == ModelMethod.RESNET50_COSINE:
-            from app.ai.resnet50_cosine import ResNet50CosineClassifier
-            return ResNet50CosineClassifier()
-
+        if method == ModelMethod.RESNET18:
+            from app.ai.cnn_classifiers import ResNet18Classifier
+            return ResNet18Classifier()
+        if method == ModelMethod.SERESNET18:
+            from app.ai.cnn_classifiers import SEResNet18Classifier
+            return SEResNet18Classifier()
+        if method == ModelMethod.DENSENET121:
+            from app.ai.cnn_classifiers import DenseNet121Classifier
+            return DenseNet121Classifier()
+        if method == ModelMethod.EFFICIENTNET_B0:
+            from app.ai.cnn_classifiers import EfficientNetB0Classifier
+            return EfficientNetB0Classifier()
+        if method == ModelMethod.DUAL_STREAM_EFFICIENTNET:
+            from app.ai.cnn_classifiers import DualStreamEfficientNetClassifier
+            return DualStreamEfficientNetClassifier()
         raise ValueError(f"Unknown model method: {method}")
 
     @classmethod
     def list_models(cls) -> list:
-        """Return metadata list for all available models (for /api/v1/models endpoint)."""
-        return [
-            {"id": method.value, **info}
-            for method, info in MODEL_DISPLAY_INFO.items()
-        ]
+        """Return metadata list for all 5 models (never crashes if a weights file is missing)."""
+        items = []
+        for method, info in MODEL_DISPLAY_INFO.items():
+            available = cls.is_available(method)
+            items.append({
+                "id": method.value,
+                **info,
+                "available": available,
+            })
+        return items

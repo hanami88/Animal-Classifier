@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import logging
 import threading
 from typing import Optional, Tuple
@@ -33,6 +34,15 @@ _INFERENCE_TRANSFORM = T.Compose([
     T.ToTensor(),
     T.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
 ])
+
+
+@dataclass(frozen=True)
+class PreprocessedInputs:
+    """Segmented & cropped PIL views shared between single and batch inference."""
+
+    body_img: Image.Image
+    head_img: Image.Image
+
 
 # ─── Lazy-loaded singleton segmentation model ─────────────────────────────────
 _seg_lock = threading.Lock()
@@ -107,12 +117,6 @@ def _extract_foreground_views(pil_img: Image.Image) -> Tuple[Image.Image, Image.
     return Image.fromarray(crop_gray), Image.fromarray(crop_raw)
 
 
-def preprocess_single_image(pil_img: Image.Image) -> torch.Tensor:
-    """Segment pet foreground (fallback raw) and apply 288x288 inference transform."""
-    body_img, _ = _extract_foreground_views(pil_img)
-    return _INFERENCE_TRANSFORM(body_img).unsqueeze(0)
-
-
 def crop_head_heuristic(pil_img: Image.Image) -> Image.Image:
     """Crop upper-center region (xmin 10%, xmax 90%, ymin 0, ymax 65%)."""
     w, h = pil_img.size
@@ -125,14 +129,28 @@ def crop_head_heuristic(pil_img: Image.Image) -> Image.Image:
     return pil_img.crop((xmin, ymin, xmax, ymax))
 
 
-def preprocess_dual_stream(pil_img: Image.Image) -> Tuple[torch.Tensor, torch.Tensor]:
-    """Build (body_tensor, head_tensor): gray-bg body crop + natural-bg 65% head crop."""
+def prepare_batch_inputs(pil_img: Image.Image) -> PreprocessedInputs:
+    """Run segmentation once and return PIL body/head views for reuse across models."""
     body_img, raw_pet_crop = _extract_foreground_views(pil_img)
     head_img = crop_head_heuristic(raw_pet_crop)
-    return (
-        _INFERENCE_TRANSFORM(body_img).unsqueeze(0),
-        _INFERENCE_TRANSFORM(head_img).unsqueeze(0),
-    )
+    return PreprocessedInputs(body_img=body_img, head_img=head_img)
+
+
+def image_to_tensor(pil_img: Image.Image) -> torch.Tensor:
+    """Apply canonical 288x288 inference transform to a prepared PIL image -> [1, 3, 288, 288]."""
+    return _INFERENCE_TRANSFORM(pil_img).unsqueeze(0)
+
+
+def preprocess_single_image(pil_img: Image.Image) -> torch.Tensor:
+    """Segment pet foreground (fallback raw) and apply 288x288 inference transform."""
+    prepared = prepare_batch_inputs(pil_img)
+    return image_to_tensor(prepared.body_img)
+
+
+def preprocess_dual_stream(pil_img: Image.Image) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Build (body_tensor, head_tensor): gray-bg body crop + natural-bg 65% head crop."""
+    prepared = prepare_batch_inputs(pil_img)
+    return image_to_tensor(prepared.body_img), image_to_tensor(prepared.head_img)
 
 
 def _zoom_tensor(tensor: torch.Tensor, zoom_ratio: float = 0.9) -> torch.Tensor:

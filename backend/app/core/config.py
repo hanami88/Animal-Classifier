@@ -1,7 +1,7 @@
 from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
-    PROJECT_NAME: str = "CLIP Pet Classifier"
+    PROJECT_NAME: str = "Pet Breed Classifier"
     API_V1_STR: str = "/api/v1"
     
     POSTGRES_USER: str = "admin"

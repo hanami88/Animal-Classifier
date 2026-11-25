@@ -23,4 +23,4 @@ app.include_router(statistics.router, prefix=settings.API_V1_STR, tags=["statist
 
 @app.get("/")
 def read_root():
-    return {"message": "Welcome to CLIP Pet Classifier API"}
+    return {"message": "Welcome to Pet Breed Classifier API"}

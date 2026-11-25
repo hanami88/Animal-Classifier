@@ -1,93 +1,141 @@
+import io
 from typing import List, Optional
 from uuid import UUID, uuid4
-from fastapi import APIRouter, Depends, UploadFile, File, BackgroundTasks, HTTPException
+
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile
+from PIL import Image as PILImage
+from PIL import ImageOps, UnidentifiedImageError
 from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
+
+from app.ai.registry import ClassifierRegistry, ModelMethod
 from app.core.database import get_db
+from app.models.breed import Breed
+from app.models.prediction import Prediction, PredictionStatus
+from app.repositories import prediction as prediction_repo
 from app.schemas.prediction import (
     PredictionCreateResponse,
     PredictionHistoryResponse,
     PredictionResponse,
 )
-from app.models.prediction import PredictionStatus
-from app.models.prediction import Prediction
-from app.models.breed import Breed
-from app.repositories import prediction as prediction_repo
-from app.services.prediction import run_inference_task
+from app.services.prediction import run_batch_inference_task, run_inference_task
 from app.storage.cloudinary_storage import upload_image_to_cloudinary
-# from app.storage.local import LocalStorage
-from app.ai.registry import ClassifierRegistry, MODEL_DISPLAY_INFO, ModelMethod
 
 router = APIRouter()
+
+ALLOWED_CONTENT_TYPES = {"image/jpeg", "image/jpg", "image/png", "image/webp"}
+ALLOWED_PIL_FORMATS = {"JPEG", "PNG", "WEBP"}
+MAX_IMAGE_BYTES = 10 * 1024 * 1024  # 10 MB
+MAX_IMAGE_DIMENSION = 8000  # px
+
+
+async def _read_and_validate_image(file: UploadFile) -> bytes:
+    """Validate file MIME type, size (<=10MB), Pillow decode, and max dimension (<=8000px)."""
+    content_type = (file.content_type or "").lower()
+    if content_type not in ALLOWED_CONTENT_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail="Unsupported file type. Only JPG, PNG, and WebP images are allowed.",
+        )
+
+    file_content = await file.read()
+    if not file_content:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+    if len(file_content) > MAX_IMAGE_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail="Image size exceeds the 10 MB limit.",
+        )
+
+    try:
+        with PILImage.open(io.BytesIO(file_content)) as opened:
+            if opened.format not in ALLOWED_PIL_FORMATS:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Unsupported image format. Only JPEG, PNG, and WebP are allowed.",
+                )
+            transposed = ImageOps.exif_transpose(opened)
+            transposed.load()
+            width, height = transposed.size
+    except HTTPException:
+        raise
+    except (UnidentifiedImageError, OSError, SyntaxError) as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid or corrupted image file: {exc}",
+        ) from exc
+
+    if width <= 0 or height <= 0 or max(width, height) > MAX_IMAGE_DIMENSION:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Image dimensions must not exceed {MAX_IMAGE_DIMENSION} px.",
+        )
+
+    return file_content
+
 
 @router.post("/predictions", response_model=PredictionCreateResponse)
 async def create_prediction(
     background_tasks: BackgroundTasks,
-    file: UploadFile = File(...), 
-    method: ModelMethod = ModelMethod.ZERO_SHOT,
-    db: Session = Depends(get_db)
+    file: UploadFile = File(...),
+    method: ModelMethod = ModelMethod.DUAL_STREAM_EFFICIENTNET,
+    tta: bool = False,
+    db: Session = Depends(get_db),
 ):
     """Upload an image and start background classification."""
-    if not file.content_type.startswith("image/"):
-        raise HTTPException(status_code=400, detail="File must be an image")
-        
-    # Read file content and upload to Cloudinary
-    file_content = await file.read()
-    image_url = upload_image_to_cloudinary(file_content, file.filename)
-    
-    # Create DB record (status: UPLOADED)
-    prediction = prediction_repo.create_prediction(db, image_key=image_url, method=method)
-    
-    # Start background task
-    # We pass a new db session for the background task to avoid session conflicts?
-    # For now in Phase 1, FastAPI depends(get_db) will close the session after response.
-    # We should use a fresh session in the background task.
-    background_tasks.add_task(
-        background_task_runner, 
-        prediction.id,
-        method
-    )
-    
+    if not ClassifierRegistry.is_available(method):
+        raise HTTPException(
+            status_code=503,
+            detail=f"Model '{method.value}' is unavailable because its weights file is missing.",
+        )
+
+    file_content = await _read_and_validate_image(file)
+    image_url = upload_image_to_cloudinary(file_content, file.filename or "upload.jpg")
+
+    prediction = prediction_repo.create_prediction(db, image_key=image_url, method=method.value)
+    background_tasks.add_task(background_task_runner, prediction.id, method, tta)
     return prediction
+
 
 @router.post("/predictions/batch", response_model=List[PredictionCreateResponse])
 async def create_prediction_batch(
     background_tasks: BackgroundTasks,
-    file: UploadFile = File(...), 
-    db: Session = Depends(get_db)
+    file: UploadFile = File(...),
+    tta: bool = False,
+    db: Session = Depends(get_db),
 ):
-    """Upload an image and start background classification for ALL models."""
-    if not file.content_type.startswith("image/"):
-        raise HTTPException(status_code=400, detail="File must be an image")
-        
-    # Read file content and upload to Cloudinary once
-    file_content = await file.read()
-    image_url = upload_image_to_cloudinary(file_content, file.filename)
-    
+    """Upload an image and start background classification for all 5 models (shared segmentation)."""
+    file_content = await _read_and_validate_image(file)
+    image_url = upload_image_to_cloudinary(file_content, file.filename or "upload.jpg")
+
     predictions = []
+    batch_items = []
     batch_id = uuid4()
-    # Create DB record and start background task for each model method
     for method in ModelMethod:
         prediction = prediction_repo.create_prediction(
             db,
             image_key=image_url,
-            method=method,
+            method=method.value,
             batch_id=batch_id,
         )
-        background_tasks.add_task(background_task_runner, prediction.id, method)
         predictions.append(prediction)
-        
+        batch_items.append((prediction.id, method))
+
+    background_tasks.add_task(run_batch_inference_task, batch_items, image_url, tta)
     return predictions
 
-def background_task_runner(prediction_id: UUID, method: str):
-    # Create a fresh DB session for the background thread
+
+def background_task_runner(prediction_id: UUID, method: ModelMethod, use_tta: bool = False) -> None:
+    """Create a fresh DB session for the single-model background task."""
     from app.core.database import SessionLocal
+
     db = SessionLocal()
     try:
-        classifier = ClassifierRegistry.get(ModelMethod(method))
-        run_inference_task(db, prediction_id, classifier)
+        classifier = ClassifierRegistry.get(method)
+        run_inference_task(db, prediction_id, classifier, use_tta=use_tta)
     finally:
         db.close()
+
 
 @router.get("/predictions/{prediction_id}", response_model=PredictionResponse)
 def get_prediction(prediction_id: UUID, db: Session = Depends(get_db)):
@@ -97,24 +145,31 @@ def get_prediction(prediction_id: UUID, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Prediction not found")
     return prediction
 
+
 @router.get("/predictions", response_model=List[PredictionResponse])
 def get_predictions(
     status: Optional[PredictionStatus] = None,
     breed_id: Optional[int] = None,
-    method: Optional[str] = None,
+    method: Optional[ModelMethod] = None,
     skip: int = 0,
     limit: int = 100,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """Get history of predictions."""
-    return prediction_repo.get_predictions(db, status=status, breed_id=breed_id, method=method, skip=skip, limit=limit)
+    return prediction_repo.get_predictions(
+        db,
+        status=status,
+        breed_id=breed_id,
+        method=method.value if method else None,
+        skip=skip,
+        limit=limit,
+    )
 
 
 @router.get("/prediction-history", response_model=PredictionHistoryResponse)
 def get_prediction_history(
     status: Optional[PredictionStatus] = None,
-    backbone: Optional[str] = None,
-    method: Optional[str] = None,
+    method: Optional[ModelMethod] = None,
     page: int = 1,
     limit: int = 12,
     db: Session = Depends(get_db),
@@ -125,24 +180,12 @@ def get_prediction_history(
     if limit < 1 or limit > 100:
         raise HTTPException(status_code=422, detail="limit must be between 1 and 100")
 
-    methods = None
-    if backbone:
-        methods = [
-            model_method.value
-            for model_method, info in MODEL_DISPLAY_INFO.items()
-            if info["backbone"] == backbone
-        ]
-        if not methods:
-            raise HTTPException(status_code=422, detail="Unknown backbone")
-
     group_key = func.coalesce(Prediction.batch_id, Prediction.id)
     matching_filters = []
     if status:
         matching_filters.append(Prediction.status == status)
     if method:
-        matching_filters.append(Prediction.method == method)
-    elif methods:
-        matching_filters.append(Prediction.method.in_(methods))
+        matching_filters.append(Prediction.method == method.value)
 
     group_query = (
         db.query(

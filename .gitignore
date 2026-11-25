@@ -17,8 +17,9 @@ backend/venv/
 .env.*
 !.env.example
 
-# User Uploads
+# User Uploads & Test Samples
 uploads/
+tmp_samples/
 
 # Dataset heavy raw files
 dataset/
