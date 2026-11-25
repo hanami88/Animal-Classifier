@@ -54,7 +54,6 @@ export interface StatisticsFilters {
   date_from: string;
   date_to: string;
   method?: string;
-  backbone?: string;
   recent_page?: number;
   recent_limit?: number;
 }

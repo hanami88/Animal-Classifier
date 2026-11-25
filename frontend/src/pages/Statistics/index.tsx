@@ -26,9 +26,16 @@ import {
   YAxis,
 } from 'recharts';
 
-import { predictionApi } from '../../services/predictionApi';
+import { formatApiError, predictionApi } from '../../services/predictionApi';
 import { statisticsApi } from '../../services/statisticsApi';
-import type { ModelInfo, PredictionResponse } from '../../types/prediction';
+import {
+  FALLBACK_MODELS,
+  formatBreedName,
+  getModelDisplayName,
+  hasTtaEnabled,
+  type ModelInfo,
+  type PredictionResponse,
+} from '../../types/prediction';
 import type { StatisticsFilters, StatisticsResponse } from '../../types/statistics';
 import './statistics.css';
 
@@ -79,10 +86,7 @@ function formatShortDate(value: string): string {
 
 function displayMethod(method: string | null, modelNames: Map<string, string>): string {
   if (!method) return 'Legacy record';
-  return modelNames.get(method) ?? method
-    .split('-')
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ');
+  return getModelDisplayName(method, modelNames);
 }
 
 function ChartEmptyState() {
@@ -133,6 +137,7 @@ function PredictionDetail({ prediction, modelName, onClose }: PredictionDetailPr
           <dl className="statistics-detail-grid">
             <div><dt>Status</dt><dd><span className={`badge badge-${prediction.status.toLowerCase()}`}>{prediction.status}</span></dd></div>
             <div><dt>Model</dt><dd>{modelName}</dd></div>
+            <div><dt>TTA Mode</dt><dd>{hasTtaEnabled(prediction.model_version) ? 'Bật (4-View)' : 'Tắt'}</dd></div>
             <div><dt>Species</dt><dd>{prediction.predicted_breed?.species.name ?? 'Not available'}</dd></div>
             <div><dt>Confidence</dt><dd>{formatPercent(prediction.score)}</dd></div>
             <div><dt>Processing time</dt><dd>{formatDuration(prediction.processing_time)}</dd></div>
@@ -170,7 +175,7 @@ export function StatisticsPage() {
   const [filters, setFilters] = useState<StatisticsFilters>(initialFilters);
   const [recentPage, setRecentPage] = useState(1);
   const [data, setData] = useState<StatisticsResponse | null>(null);
-  const [models, setModels] = useState<ModelInfo[]>([]);
+  const [models, setModels] = useState<ModelInfo[]>(FALLBACK_MODELS);
   const [selectedPrediction, setSelectedPrediction] = useState<PredictionResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -179,14 +184,10 @@ export function StatisticsPage() {
     () => new Map(models.map((model) => [model.id, model.name])),
     [models],
   );
-  const availableAdapters = useMemo(
-    () => models.filter((model) => !filters.backbone || model.backbone === filters.backbone),
-    [filters.backbone, models],
-  );
 
   const fetchStatistics = useCallback(async () => {
     if (filters.date_from > filters.date_to) {
-      setError('Start date must be on or before end date');
+      setError('Ngày bắt đầu phải nhỏ hơn hoặc bằng ngày kết thúc.');
       return;
     }
     setLoading(true);
@@ -195,20 +196,24 @@ export function StatisticsPage() {
       const response = await statisticsApi.getStatistics({
         ...filters,
         method: filters.method || undefined,
-        backbone: filters.backbone || undefined,
         recent_page: recentPage,
         recent_limit: RECENT_PAGE_SIZE,
       });
       setData(response);
     } catch (requestError: unknown) {
-      setError(requestError instanceof Error ? requestError.message : 'Unable to load statistics');
+      setError(formatApiError(requestError, 'Không thể tải dữ liệu thống kê.'));
     } finally {
       setLoading(false);
     }
   }, [filters, recentPage]);
 
   useEffect(() => {
-    predictionApi.listModels().then(setModels).catch(() => setModels([]));
+    predictionApi
+      .listModels()
+      .then((res) => {
+        if (res.length > 0) setModels(res);
+      })
+      .catch(() => setModels(FALLBACK_MODELS));
   }, []);
 
   useEffect(() => {
@@ -268,23 +273,12 @@ export function StatisticsPage() {
         </label>
         <label className="statistics-model-filter">
           <span>Model</span>
-          <select value={filters.backbone ?? ''} onChange={(event) => {
-            setRecentPage(1);
-            setFilters((current) => ({ ...current, backbone: event.target.value || undefined, method: undefined }));
-          }}>
-            <option value="">All models</option>
-            <option value="clip">CLIP</option>
-            <option value="resnet50">ResNet-50</option>
-          </select>
-        </label>
-        <label className="statistics-model-filter">
-          <span>Adapter</span>
           <select value={filters.method ?? ''} onChange={(event) => {
             setRecentPage(1);
             setFilters((current) => ({ ...current, method: event.target.value || undefined }));
           }}>
-            <option value="">All adapters</option>
-            {availableAdapters.map((model) => <option value={model.id} key={model.id}>{model.name}</option>)}
+            <option value="">Tất cả mô hình (5)</option>
+            {models.map((model) => <option value={model.id} key={model.id}>{model.name}</option>)}
           </select>
         </label>
       </div>
@@ -451,8 +445,11 @@ export function StatisticsPage() {
                         onKeyDown={(event) => { if (event.key === 'Enter') setSelectedPrediction(prediction); }}
                       >
                         <td>{formatDateTime(prediction.created_at)}</td>
-                        <td>{displayMethod(prediction.method, modelNames)}</td>
-                        <td><strong>{prediction.predicted_breed?.name ?? 'Pending'}</strong><small>{prediction.predicted_breed?.species.name ?? ''}</small></td>
+                        <td>
+                          {displayMethod(prediction.method, modelNames)}
+                          {hasTtaEnabled(prediction.model_version) && <small>TTA: Bật</small>}
+                        </td>
+                        <td><strong>{prediction.predicted_breed ? formatBreedName(prediction.predicted_breed.name) : 'Pending'}</strong><small>{prediction.predicted_breed?.species.name ?? ''}</small></td>
                         <td>{formatPercent(prediction.score)}</td>
                         <td>{formatDuration(prediction.processing_time)}</td>
                         <td><span className={`badge badge-${prediction.status.toLowerCase()}`}>{prediction.status}</span></td>

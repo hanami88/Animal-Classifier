@@ -1,5 +1,10 @@
-import { CheckCircle, XCircle, Clock, Loader2, Award, Cpu, TrendingUp } from 'lucide-react';
-import type { PredictionResponse } from '../../types/prediction';
+import { CheckCircle, XCircle, Clock, Loader2, Award, Cpu, TrendingUp, Sparkles } from 'lucide-react';
+import {
+  formatBreedName,
+  getModelDisplayName,
+  hasTtaEnabled,
+  type PredictionResponse,
+} from '../../types/prediction';
 import { PredictionChart } from '../PredictionChart';
 
 interface PredictionResultProps {
@@ -32,13 +37,13 @@ function ScoreRing({ score }: { score: number }) {
   const color = pct >= 75 ? '#10b981' : pct >= 50 ? '#f59e0b' : '#ef4444';
 
   return (
-    <div style={{ position: 'relative', width: 110, height: 110 }}>
+    <div style={{ position: 'relative', width: 110, height: 110, flexShrink: 0 }}>
       <svg width="110" height="110" style={{ transform: 'rotate(-90deg)' }}>
-        {/* Track */}
         <circle cx="55" cy="55" r={radius} fill="none" stroke="rgba(139,92,246,0.15)" strokeWidth="8" />
-        {/* Progress */}
         <circle
-          cx="55" cy="55" r={radius}
+          cx="55"
+          cy="55"
+          r={radius}
           fill="none"
           stroke={color}
           strokeWidth="8"
@@ -48,16 +53,18 @@ function ScoreRing({ score }: { score: number }) {
           style={{ transition: 'stroke-dashoffset 1s ease' }}
         />
       </svg>
-      <div style={{
-        position: 'absolute',
-        inset: 0,
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-      }}>
+      <div
+        style={{
+          position: 'absolute',
+          inset: 0,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+      >
         <span style={{ fontSize: 22, fontWeight: 800, color, lineHeight: 1 }}>{pct}%</span>
-        <span style={{ fontSize: 10, color: 'var(--color-text-muted)', marginTop: 2 }}>score</span>
+        <span style={{ fontSize: 10, color: 'var(--color-text-muted)', marginTop: 2 }}>tin cậy</span>
       </div>
     </div>
   );
@@ -65,50 +72,60 @@ function ScoreRing({ score }: { score: number }) {
 
 export function PredictionResult({ prediction }: PredictionResultProps) {
   const { status, predicted_breed, score, top_k_results, model_version, method, error_message } = prediction;
+  const ttaEnabled = hasTtaEnabled(model_version);
+  const modelLabel = getModelDisplayName(method);
 
-  /* ---------- PROCESSING ---------- */
   if (status === 'UPLOADED' || status === 'PROCESSING') {
     return (
       <div className="glass-card animate-fade-in" style={{ padding: 40, textAlign: 'center' }}>
-        <div style={{
-          width: 64,
-          height: 64,
-          borderRadius: '50%',
-          border: '3px solid rgba(139,92,246,0.2)',
-          borderTopColor: 'var(--color-accent)',
-          animation: 'spin 1s linear infinite',
-          margin: '0 auto 20px',
-        }} />
-        <h3 style={{ fontSize: 18, fontWeight: 600, marginBottom: 8 }}>Analyzing image...</h3>
+        <div
+          style={{
+            width: 64,
+            height: 64,
+            borderRadius: '50%',
+            border: '3px solid rgba(139,92,246,0.2)',
+            borderTopColor: 'var(--color-accent)',
+            animation: 'spin 1s linear infinite',
+            margin: '0 auto 20px',
+          }}
+        />
+        <h3 style={{ fontSize: 18, fontWeight: 600, marginBottom: 8 }}>
+          Đang phân tích ({modelLabel})...
+        </h3>
         <p style={{ color: 'var(--color-text-muted)', fontSize: 14 }}>
-          AI is identifying your pet's breed
+          AI đang nhận diện giống thú cưng của bạn
         </p>
       </div>
     );
   }
 
-  /* ---------- FAILED ---------- */
   if (status === 'FAILED') {
     return (
-      <div className="glass-card animate-fade-in" style={{
-        padding: 32,
-        textAlign: 'center',
-        borderColor: 'rgba(239,68,68,0.3)',
-      }}>
+      <div
+        className="glass-card animate-fade-in"
+        style={{
+          padding: 32,
+          textAlign: 'center',
+          borderColor: 'rgba(239,68,68,0.3)',
+        }}
+      >
         <XCircle size={48} color="var(--color-error)" style={{ margin: '0 auto 16px' }} />
         <h3 style={{ fontSize: 18, fontWeight: 600, color: 'var(--color-error)', marginBottom: 8 }}>
-          Classification Failed
+          Nhận diện thất bại ({modelLabel})
         </h3>
         {error_message && (
-          <p style={{
-            color: 'var(--color-text-muted)',
-            fontSize: 13,
-            background: 'rgba(239,68,68,0.05)',
-            padding: '12px 16px',
-            borderRadius: 8,
-            marginTop: 12,
-            textAlign: 'left',
-          }}>
+          <p
+            style={{
+              color: 'var(--color-text-muted)',
+              fontSize: 13,
+              background: 'rgba(239,68,68,0.05)',
+              padding: '12px 16px',
+              borderRadius: 8,
+              marginTop: 12,
+              textAlign: 'left',
+              overflowWrap: 'anywhere',
+            }}
+          >
             {error_message}
           </p>
         )}
@@ -116,68 +133,100 @@ export function PredictionResult({ prediction }: PredictionResultProps) {
     );
   }
 
-  /* ---------- COMPLETED ---------- */
-  const breedDisplayName = predicted_breed?.name?.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) ?? '—';
+  const breedDisplayName = formatBreedName(predicted_breed?.name);
   const speciesName = predicted_breed?.species?.name ?? '—';
 
   return (
     <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      {/* Main result card */}
-      <div className="glass-card" style={{ padding: 28 }}>
-        {/* Header */}
-        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 24, flexWrap: 'wrap', gap: 12 }}>
-          <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+      <div className="glass-card" style={{ padding: 24 }}>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'flex-start',
+            justifyContent: 'space-between',
+            marginBottom: 24,
+            flexWrap: 'wrap',
+            gap: 12,
+          }}
+        >
+          <div style={{ minWidth: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
               <StatusBadge status={status} />
               {(method || model_version) && (
-                <span style={{
-                  display: 'flex', alignItems: 'center', gap: 4,
-                  fontSize: 11, color: 'var(--color-text-faint)',
-                  padding: '3px 8px',
-                  background: 'rgba(139,92,246,0.05)',
-                  border: '1px solid var(--color-border)',
-                  borderRadius: 6,
-                }}>
-                  <Cpu size={10} />
-                  {method ? `Method: ${method}` : model_version}
+                <span
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 4,
+                    fontSize: 11,
+                    color: 'var(--color-text-muted)',
+                    padding: '3px 8px',
+                    background: 'rgba(139,92,246,0.08)',
+                    border: '1px solid var(--color-border)',
+                    borderRadius: 6,
+                    fontWeight: 600,
+                  }}
+                >
+                  <Cpu size={11} />
+                  {method ? modelLabel : model_version}
                 </span>
               )}
-              {prediction.processing_time != null && (
-                <span style={{
-                  display: 'flex', alignItems: 'center', gap: 4,
-                  fontSize: 11, color: 'var(--color-text-faint)',
+              <span
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 4,
+                  fontSize: 11,
+                  fontWeight: 700,
                   padding: '3px 8px',
-                  background: 'rgba(16, 185, 129, 0.05)',
-                  border: '1px solid var(--color-border)',
                   borderRadius: 6,
-                }}>
-                  <Clock size={10} />
+                  background: ttaEnabled ? 'rgba(139,92,246,0.16)' : 'var(--color-surface-2)',
+                  color: ttaEnabled ? 'var(--color-accent)' : 'var(--color-text-faint)',
+                  border: ttaEnabled ? '1px solid rgba(139,92,246,0.35)' : '1px solid var(--color-border)',
+                }}
+              >
+                <Sparkles size={10} />
+                {ttaEnabled ? 'TTA: Bật (4-View)' : 'TTA: Tắt'}
+              </span>
+              {prediction.processing_time != null && (
+                <span
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 4,
+                    fontSize: 11,
+                    color: 'var(--color-text-muted)',
+                    padding: '3px 8px',
+                    background: 'rgba(16, 185, 129, 0.08)',
+                    border: '1px solid var(--color-border)',
+                    borderRadius: 6,
+                    fontWeight: 600,
+                  }}
+                >
+                  <Clock size={11} />
                   {prediction.processing_time.toFixed(2)}s
                 </span>
               )}
             </div>
+
             <h2 style={{ fontSize: 28, fontWeight: 800, letterSpacing: '-0.02em', lineHeight: 1.1 }}>
               {breedDisplayName}
             </h2>
-            <p style={{ color: 'var(--color-text-muted)', fontSize: 14, marginTop: 4 }}>
+            <p style={{ color: 'var(--color-text-muted)', fontSize: 14, marginTop: 6 }}>
               <Award size={13} style={{ display: 'inline', marginRight: 4 }} />
               {speciesName}
             </p>
           </div>
 
-          {/* Score ring */}
-          {score !== null && score !== undefined && (
-            <ScoreRing score={score} />
-          )}
+          {score !== null && score !== undefined && <ScoreRing score={score} />}
         </div>
 
-        {/* Top-K Chart */}
         {top_k_results && top_k_results.length > 0 && (
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
               <TrendingUp size={14} color="var(--color-accent)" />
               <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-muted)' }}>
-                Top {top_k_results.length} results
+                Top {top_k_results.length} giống có khả năng cao nhất
               </span>
             </div>
             <PredictionChart topKResults={top_k_results} />

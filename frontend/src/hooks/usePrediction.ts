@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import axios from "axios";
-import { predictionApi } from "../services/predictionApi";
+import { formatApiError, predictionApi } from "../services/predictionApi";
 import type { PredictionResponse, PredictionStatus } from "../types/prediction";
 
 const POLL_INTERVAL_MS = 2000;
@@ -84,8 +84,7 @@ export function usePrediction(): UsePredictionReturn {
           stopPolling();
         }
       } catch (err: unknown) {
-        const message =
-          err instanceof Error ? err.message : "Failed to fetch predictions";
+        const message = formatApiError(err, "Không thể lấy kết quả dự đoán từ máy chủ.");
         setError(message);
         if (axios.isAxiosError(err) && err.response?.status === 404) {
           stopPolling();

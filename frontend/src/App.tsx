@@ -68,12 +68,12 @@ function NavBar({ isDark, toggleTheme }: { isDark: boolean, toggleTheme: () => v
                 WebkitTextFillColor: 'transparent',
                 backgroundClip: 'text',
               }}>
-                Pet
+                Pet Breed
               </span>
               {' '}Classifier
             </div>
             <div className="app-brand-subtitle" style={{ fontSize: 10, color: 'var(--color-text-faint)', lineHeight: 1, marginTop: 2 }}>
-              Powered by CLIP
+              37 giống chó và mèo
             </div>
           </div>
         </div>

@@ -31,7 +31,7 @@
 
 .statistics-filters {
   display: grid;
-  grid-template-columns: 170px 170px repeat(2, minmax(210px, 1fr));
+  grid-template-columns: 170px 170px minmax(220px, 1fr);
   align-items: end;
   gap: 12px;
   padding: 16px;

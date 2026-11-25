@@ -1,249 +1,395 @@
 import React, { useEffect, useState } from 'react';
-import type { ModelInfo, ModelMethod, BackboneType } from '../../types/prediction';
+import {
+  DEFAULT_MODEL_METHOD,
+  FALLBACK_MODELS,
+  getModelStreamGroup,
+  type ModelInfo,
+  type ModelMethod,
+  type SingleModelMethod,
+} from '../../types/prediction';
 import { predictionApi } from '../../services/predictionApi';
-import { ChevronDown, Cpu, Sparkles, ImageIcon, TextCursorInput } from 'lucide-react';
+import { Cpu, Sparkles, ImageIcon, Layers, Star } from 'lucide-react';
 
 interface ConfigPanelProps {
   selectedMethod: ModelMethod;
   onSelectMethod: (method: ModelMethod) => void;
-  customPrompt: string;
-  onPromptChange: (prompt: string) => void;
+  useTta: boolean;
+  onToggleTta: (enabled: boolean) => void;
   onClassify: () => void;
 }
 
-const DEFAULT_PROMPT = "Picture of a pet with breed: {raw_name}, which is a type of animal.";
+function ModelOptionCard({
+  model,
+  selected,
+  onSelect,
+}: {
+  model: ModelInfo;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  const singleAcc = model.accuracy_single ?? model.accuracy;
+  const ttaAcc = model.accuracy_tta;
 
-const getModelDisplayName = (m: ModelInfo | { id: string, name: string }) => {
-  let name = m.name.replace(/\s*\(.*?\)\s*/g, '').trim();
-  if (m.id === 'coop') return `${name} (Recommended 🌟)`;
-  if (m.id === 'zero-shot') return `${name} (Fastest ⚡)`;
-  return name;
-};
+  return (
+    <button
+      type="button"
+      disabled={!model.available}
+      onClick={onSelect}
+      style={{
+        width: '100%',
+        textAlign: 'left',
+        padding: '12px 14px',
+        borderRadius: 12,
+        border: selected
+          ? '2px solid var(--color-accent)'
+          : '1px solid var(--color-border)',
+        background: selected
+          ? 'rgba(139,92,246,0.10)'
+          : 'var(--color-bg)',
+        opacity: model.available ? 1 : 0.48,
+        cursor: model.available ? 'pointer' : 'not-allowed',
+        transition: 'all 0.18s ease',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 6,
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+          <span
+            style={{
+              width: 14,
+              height: 14,
+              borderRadius: '50%',
+              flexShrink: 0,
+              border: selected ? '4px solid var(--color-accent)' : '2px solid var(--color-text-faint)',
+              background: 'var(--color-surface)',
+            }}
+          />
+          <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--color-text)' }}>
+            {model.name}
+          </span>
+          {model.recommended && (
+            <span
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 4,
+                padding: '2px 8px',
+                borderRadius: 999,
+                fontSize: 10,
+                fontWeight: 700,
+                background: 'rgba(139,92,246,0.16)',
+                color: 'var(--color-accent)',
+                border: '1px solid rgba(139,92,246,0.35)',
+              }}
+            >
+              <Star size={10} /> Recommended
+            </span>
+          )}
+          {!model.available && (
+            <span
+              style={{
+                padding: '2px 8px',
+                borderRadius: 999,
+                fontSize: 10,
+                fontWeight: 700,
+                background: 'rgba(239,68,68,0.12)',
+                color: 'var(--color-error)',
+                border: '1px solid rgba(239,68,68,0.28)',
+              }}
+            >
+              Không khả dụng
+            </span>
+          )}
+        </div>
+
+        <span
+          style={{
+            fontSize: 11,
+            fontWeight: 700,
+            color: 'var(--color-accent)',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          Top-1: {singleAcc.toFixed(2)}%
+          {ttaAcc != null ? ` · TTA ${ttaAcc.toFixed(2)}%` : ''}
+        </span>
+      </div>
+
+      <p style={{ fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.45, paddingLeft: 22 }}>
+        {model.description}
+      </p>
+    </button>
+  );
+}
 
 export const ConfigPanel: React.FC<ConfigPanelProps> = ({
   selectedMethod,
   onSelectMethod,
-  customPrompt,
-  onPromptChange,
-  onClassify
+  useTta,
+  onToggleTta,
+  onClassify,
 }) => {
-  const [models, setModels] = useState<ModelInfo[]>([]);
-  const [activeBackbone, setActiveBackbone] = useState<BackboneType>('clip');
-
-  // Automatically select the first model of the newly selected backbone
-  const handleBackboneChange = (backbone: BackboneType) => {
-    setActiveBackbone(backbone);
-    const available = models.filter(m => m.backbone === backbone);
-    if (available.length > 0) {
-      onSelectMethod(available[0].id);
-    } else {
-      // Fallbacks if models aren't loaded yet
-      onSelectMethod(backbone === 'clip' ? 'zero-shot' : 'resnet50-cosine');
-    }
-  };
+  const [models, setModels] = useState<ModelInfo[]>(FALLBACK_MODELS);
+  const [lastSingleMethod, setLastSingleMethod] = useState<SingleModelMethod>(DEFAULT_MODEL_METHOD);
 
   useEffect(() => {
-    predictionApi.listModels()
-      .then(data => setModels(data))
-      .catch(err => console.error("Failed to fetch models", err));
+    predictionApi
+      .listModels()
+      .then((data) => {
+        if (data.length > 0) {
+          setModels(data);
+        }
+      })
+      .catch((err) => console.error('Failed to fetch models', err));
   }, []);
 
+  const handleSelectSingle = (method: SingleModelMethod) => {
+    setLastSingleMethod(method);
+    onSelectMethod(method);
+  };
+
+  const singleStreamModels = models.filter((m) => getModelStreamGroup(m.id) === 'single-stream');
+  const dualStreamModels = models.filter((m) => getModelStreamGroup(m.id) === 'dual-stream');
+
+  const selectedModelInfo =
+    selectedMethod !== 'all' ? models.find((m) => m.id === selectedMethod) : undefined;
+  const isSingleSelectionUnavailable =
+    selectedMethod !== 'all' && selectedModelInfo !== undefined && !selectedModelInfo.available;
+
+  const ensureAvailableSingleMethod = (): SingleModelMethod => {
+    const preferred = models.find((m) => m.id === lastSingleMethod && m.available);
+    if (preferred) return preferred.id;
+    const firstAvailable = models.find((m) => m.available);
+    return firstAvailable?.id ?? DEFAULT_MODEL_METHOD;
+  };
+
   return (
-    <div style={{
-      background: 'var(--color-surface)',
-      borderRadius: 24,
-      border: '1px solid var(--color-border)',
-      boxShadow: '0 10px 40px -10px rgba(0,0,0,0.05)',
-      height: '100%',
-      minHeight: 400,
-      display: 'flex',
-      flexDirection: 'column',
-      padding: 32,
-    }}>
-      <h2 style={{
-        fontSize: 20,
-        fontWeight: 700,
-        color: 'var(--color-text)',
-        marginBottom: 24,
-        letterSpacing: '-0.01em',
+    <div
+      style={{
+        background: 'var(--color-surface)',
+        borderRadius: 24,
+        border: '1px solid var(--color-border)',
+        boxShadow: '0 10px 40px -10px rgba(0,0,0,0.05)',
+        height: '100%',
         display: 'flex',
-        alignItems: 'center',
-        gap: 8
-      }}>
+        flexDirection: 'column',
+        padding: 24,
+      }}
+    >
+      <h2
+        style={{
+          fontSize: 20,
+          fontWeight: 700,
+          color: 'var(--color-text)',
+          marginBottom: 20,
+          letterSpacing: '-0.01em',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+        }}
+      >
         <Sparkles size={20} className="text-indigo-500" />
         AI Configuration
       </h2>
 
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 24 }}>
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 20 }}>
         {/* Classification Mode */}
         <div>
-          <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: 'var(--color-text-muted)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-            Classification Mode
+          <label
+            style={{
+              display: 'block',
+              fontSize: 12,
+              fontWeight: 700,
+              color: 'var(--color-text-muted)',
+              marginBottom: 8,
+              textTransform: 'uppercase',
+              letterSpacing: '0.05em',
+            }}
+          >
+            Chế độ nhận diện
           </label>
-          <div style={{ display: 'flex', gap: 12 }}>
+          <div style={{ display: 'flex', gap: 10 }}>
             <button
-              onClick={() => {
-                const available = models.filter(m => m.backbone === activeBackbone);
-                onSelectMethod(available.length > 0 ? available[0].id : (activeBackbone === 'clip' ? 'zero-shot' : 'resnet50-cosine'));
-              }}
-              className={`flex-1 px-4 py-3 border-2 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 transition-all ${selectedMethod !== 'all'
+              type="button"
+              onClick={() => onSelectMethod(ensureAvailableSingleMethod())}
+              className={`flex-1 px-4 py-3 border-2 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 transition-all ${
+                selectedMethod !== 'all'
                   ? 'bg-indigo-50 dark:bg-indigo-900/20 border-indigo-500 text-indigo-700 dark:text-indigo-300'
                   : 'bg-slate-50 dark:bg-slate-800/50 border-transparent text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'
-                }`}
+              }`}
             >
               <Cpu size={16} /> Single Model
             </button>
             <button
+              type="button"
               onClick={() => onSelectMethod('all')}
-              className={`flex-1 px-4 py-3 border-2 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 transition-all ${selectedMethod === 'all'
+              className={`flex-1 px-4 py-3 border-2 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 transition-all ${
+                selectedMethod === 'all'
                   ? 'bg-indigo-50 dark:bg-indigo-900/20 border-indigo-500 text-indigo-700 dark:text-indigo-300'
                   : 'bg-slate-50 dark:bg-slate-800/50 border-transparent text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'
-                }`}
+              }`}
             >
-              <Sparkles size={16} /> All Models
+              <Layers size={16} /> All Models
             </button>
           </div>
         </div>
 
-        {selectedMethod !== 'all' && (
-          <>
-            {/* Model Backbone */}
-            <div className="animate-fade-in">
-              <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: 'var(--color-text-muted)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                Model Backbone
-              </label>
-              <div style={{ display: 'flex', gap: 12 }}>
-                <button
-                  onClick={() => handleBackboneChange('clip')}
-                  className={`flex-1 px-4 py-3 border-2 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 transition-all ${activeBackbone === 'clip'
-                      ? 'bg-indigo-50 dark:bg-indigo-900/20 border-indigo-500 text-indigo-700 dark:text-indigo-300'
-                      : 'bg-slate-50 dark:bg-slate-800/50 border-transparent text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'
-                    }`}
-                >
-                  <Cpu size={16} /> CLIP
-                </button>
-                <button
-                  onClick={() => handleBackboneChange('resnet50')}
-                  className={`flex-1 px-4 py-3 border-2 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 transition-all ${activeBackbone === 'resnet50'
-                      ? 'bg-indigo-50 dark:bg-indigo-900/20 border-indigo-500 text-indigo-700 dark:text-indigo-300'
-                      : 'bg-slate-50 dark:bg-slate-800/50 border-transparent text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'
-                    }`}
-                >
-                  <Cpu size={16} /> ResNet-50
-                </button>
-              </div>
-            </div>
-
-            {/* Adaptive Method */}
-            <div className="animate-fade-in">
-              <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: 'var(--color-text-muted)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                {activeBackbone === 'clip' ? 'CLIP Adapter Method' : 'ResNet-50 Adapter Method'}
-              </label>
-              <div className="relative">
-                <select
-                  value={selectedMethod}
-                  onChange={(e) => onSelectMethod(e.target.value as ModelMethod)}
+        {/* 5 Models List grouped by Dual-Stream & Single-Stream */}
+        {selectedMethod !== 'all' ? (
+          <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            {dualStreamModels.length > 0 && (
+              <div>
+                <div
                   style={{
-                    width: '100%',
-                    appearance: 'none',
-                    padding: '14px 16px',
-                    background: 'var(--color-bg)',
-                    border: '1px solid var(--color-border-strong)',
-                    borderRadius: 12,
-                    fontSize: 15,
-                    fontWeight: 500,
-                    color: 'var(--color-text)',
-                    cursor: 'pointer',
-                    outline: 'none',
+                    fontSize: 11,
+                    fontWeight: 700,
+                    color: 'var(--color-text-muted)',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.06em',
+                    marginBottom: 8,
                   }}
-                  className="hover:border-indigo-400 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 transition-all"
                 >
-                  {models.length > 0 ? (
-                    models.filter(m => m.backbone === activeBackbone).map(m => (
-                      <option key={m.id} value={m.id}>
-                        {getModelDisplayName(m)}
-                      </option>
-                    ))
-                  ) : (
-                    activeBackbone === 'clip' ? (
-                      <>
-                        <option value="zero-shot">Zero-Shot (Fastest ⚡)</option>
-                        <option value="tip-adapter">Tip-Adapter (Free)</option>
-                        <option value="tip-adapter-f">Tip-Adapter-F</option>
-                        <option value="clip-adapter">CLIP-Adapter</option>
-                        <option value="coop">CoOp (Recommended 🌟)</option>
-                      </>
-                    ) : (
-                      <>
-                        <option value="resnet50-baseline">ResNet-50 Baseline</option>
-                        <option value="resnet50-prototype">ResNet-50 Prototype</option>
-                        <option value="resnet50-linear">ResNet-50 Linear Probe</option>
-                        <option value="resnet50-adapter">ResNet-50 Residual Adapter</option>
-                        <option value="resnet50-cosine">ResNet-50 Cosine Head (Recommended 🌟)</option>
-                      </>
-                    )
-                  )}
-                </select>
-                <ChevronDown size={18} style={{ position: 'absolute', right: 16, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', color: 'var(--color-text-muted)' }} />
+                  Hai luồng (Dual-Stream)
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {dualStreamModels.map((model) => (
+                    <ModelOptionCard
+                      key={model.id}
+                      model={model}
+                      selected={selectedMethod === model.id}
+                      onSelect={() => handleSelectSingle(model.id)}
+                    />
+                  ))}
+                </div>
               </div>
-            </div>
-          </>
-        )}
+            )}
 
-        {/* Custom Prompt (Only for CoOp) */}
-        {selectedMethod === 'coop' && (
-          <div className="animate-fade-in">
-            <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: 'var(--color-text-muted)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-              Custom Prompt Context
-            </label>
-            <div className="relative">
-              <TextCursorInput size={16} className="absolute left-3 top-3.5 text-slate-400" />
-              <input
-                type="text"
-                value={customPrompt}
-                onChange={(e) => onPromptChange(e.target.value)}
-                placeholder={DEFAULT_PROMPT}
-                style={{
-                  width: '100%',
-                  padding: '12px 16px 12px 36px',
-                  background: 'var(--color-bg)',
-                  border: '1px solid var(--color-border-strong)',
-                  borderRadius: 12,
-                  fontSize: 14,
-                  color: 'var(--color-text)',
-                  outline: 'none',
-                }}
-                className="hover:border-indigo-400 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 transition-all placeholder-slate-400"
-              />
-            </div>
-            <p style={{ fontSize: 12, color: 'var(--color-text-faint)', marginTop: 6 }}>
-              You can optionally enter a custom prompt template. Leave blank to use the default optimal template.
-            </p>
+            {singleStreamModels.length > 0 && (
+              <div>
+                <div
+                  style={{
+                    fontSize: 11,
+                    fontWeight: 700,
+                    color: 'var(--color-text-muted)',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.06em',
+                    marginBottom: 8,
+                  }}
+                >
+                  Một luồng (Single-Stream)
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {singleStreamModels.map((model) => (
+                    <ModelOptionCard
+                      key={model.id}
+                      model={model}
+                      selected={selectedMethod === model.id}
+                      onSelect={() => handleSelectSingle(model.id)}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div
+            className="animate-fade-in"
+            style={{
+              padding: '14px 16px',
+              borderRadius: 12,
+              background: 'rgba(139,92,246,0.06)',
+              border: '1px solid var(--color-border)',
+              fontSize: 13,
+              color: 'var(--color-text-muted)',
+              lineHeight: 1.55,
+            }}
+          >
+            Chế độ <strong style={{ color: 'var(--color-text)' }}>All Models</strong> sẽ chạy đồng thời cả 5 mô hình
+            trên cùng một ảnh (tách nền 1 lần dùng chung) và hiển thị bảng đối chiếu độ đồng thuận Top-1.
           </div>
         )}
+
+        {/* TTA Switch */}
+        <div
+          style={{
+            padding: '14px 16px',
+            borderRadius: 14,
+            border: '1px solid var(--color-border)',
+            background: 'var(--color-surface-2)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 14,
+          }}
+        >
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--color-text)' }}>
+              Độ chính xác cao (TTA)
+            </div>
+            <p style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 3, lineHeight: 1.45 }}>
+              Chính xác hơn khoảng 0,5–0,9% nhưng chậm hơn khoảng 3–4 lần
+            </p>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={useTta}
+            aria-label="Độ chính xác cao (TTA)"
+            onClick={() => onToggleTta(!useTta)}
+            style={{
+              width: 48,
+              height: 28,
+              borderRadius: 999,
+              border: 'none',
+              padding: 3,
+              flexShrink: 0,
+              cursor: 'pointer',
+              background: useTta ? 'var(--color-accent)' : 'rgba(148,163,184,0.45)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: useTta ? 'flex-end' : 'flex-start',
+              transition: 'background 0.2s ease',
+            }}
+          >
+            <span
+              style={{
+                width: 22,
+                height: 22,
+                borderRadius: '50%',
+                background: '#ffffff',
+                boxShadow: '0 1px 4px rgba(0,0,0,0.2)',
+              }}
+            />
+          </button>
+        </div>
       </div>
 
       <button
+        type="button"
+        disabled={isSingleSelectionUnavailable}
         onClick={onClassify}
         style={{
           width: '100%',
           padding: '16px',
-          background: 'linear-gradient(135deg, #8b5cf6 0%, #6366f1 100%)',
+          background: isSingleSelectionUnavailable
+            ? 'rgba(148,163,184,0.4)'
+            : 'linear-gradient(135deg, #8b5cf6 0%, #6366f1 100%)',
           color: 'white',
           border: 'none',
           borderRadius: 14,
           fontSize: 16,
           fontWeight: 700,
-          cursor: 'pointer',
+          cursor: isSingleSelectionUnavailable ? 'not-allowed' : 'pointer',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
           gap: 8,
-          boxShadow: '0 4px 14px rgba(99,102,241,0.3)',
-          marginTop: 24,
+          boxShadow: isSingleSelectionUnavailable ? 'none' : '0 4px 14px rgba(99,102,241,0.3)',
+          marginTop: 20,
           transition: 'all 0.2s ease',
         }}
-        className="hover:shadow-[0_6px_20px_rgba(99,102,241,0.4)] hover:-translate-y-0.5 active:translate-y-0 active:shadow-[0_2px_8px_rgba(99,102,241,0.3)]"
       >
         <ImageIcon size={20} />
         Classify Now
